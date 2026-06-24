@@ -1,1 +1,33 @@
+
+# Environments
 venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Logs and OS files
+*.log
+Thumbs.db
+desktop.ini
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
