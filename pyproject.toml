@@ -1,0 +1,18 @@
+[project]
+name = "python-course"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "google-api-python-client>=2.198.0",
+    "google-auth-httplib2>=0.4.0",
+    "google-auth-oauthlib>=1.4.0",
+    "google-genai>=2.9.0",
+    "httpx>=0.28.1",
+    "instructor[google-genai]>=1.15.3",
+    "ipykernel>=7.3.0",
+    "mistralai>=1.0,<2",
+    "pydantic>=2.13.4",
+    "pypdf>=6.13.3",
+    "python-dotenv>=1.2.2",
+]
