@@ -1,174 +1,140 @@
-"""
-Чиста доменна логіка — без I/O та без LLM.
-
-Принцип «спершу алгоритм, потім LLM»: усе, що можна вирішити детерміновано,
-вирішуємо звичайним кодом. Це дешевше (нуль токенів), швидше (нуль мережі) і,
-головне, надійніше: LLM стохастична за природою, тож має ненульову ймовірність
-помилки навіть на очевидному. Дорогу «думаючу» модель бережемо на крок суджень,
-де справді потрібен аналіз тексту (достатність і матчинг — Task 8–9).
-"""
-
 from datetime import datetime
+from enum import Enum
+from pydantic import BaseModel, Field
 
-from core.ports import CalendarProvider
-from core.models import (
-    CandidateProfile,
-    Conversation,
-    ConversationStage,
-    ReplyAnalysis,
-    SearchPreferences,
-    SlotDecision,
-    Vacancy,
-)
+class WorkFormat(str, Enum):
+    onsite = "onsite"
+    hybrid = "hybrid"
+    remote = "remote"
 
+class LanguageSkill(BaseModel):
+    language_code: str | None = Field(None, description="ISO 639-1 code, e.g., 'en', 'uk'")
+    level: str | None = Field(None, description="CEFR level if specified, e.g., 'B2', 'C1', 'Native'")
 
-def rejection_reason(
-    v: Vacancy,
-    prefs: SearchPreferences,
-    profile: CandidateProfile,
-) -> str | None:
-    """Причина відсіву вакансії або None, якщо вона проходить далі.
+class ExperienceEntry(BaseModel):
+    """Один запис у комерційному досвіді."""
+    company: str | None = None
+    role: str | None = None
+    years: float | None = Field(None, description="Тривалість у роках (приблизно)")
+    highlights: list[str] = Field(default_factory=list, description="Ключові досягнення")
 
-    Лише дешеві детерміновані перевірки. Тонке судження «наскільки кандидат
-    підходить за змістом» свідомо лишаємо LLM-матчингу (Task 9): це оцінка, не факт.
+class Education(BaseModel):
+    """Один запис про освіту."""
+    degree: str | None = None               # "Master's", "Bachelor's"
+    field: str | None = None                 # "Radio Engineering"
+    institution: str | None = None
 
-    Args:
-        v: структурована вакансія (з raw_text для текстових перевірок).
-        prefs: побажання пошукача (вилка, формат, стоп-слова, must-have).
-        profile: профіль кандидата (наразі не використовується у відсіві —
-            залишений у сигнатурі для майбутніх детермінованих перевірок).
+class CandidateProfile(BaseModel):
+    """Хто пошукач — витягуємо з резюме."""
+    full_name: str | None = None
+    title: str | None = None              # "Python Backend Developer"
+    location: str | None = None           # поточна локація кандидата
+    years_experience: float | None = None
+    seniority: str | None = None          # junior / middle / senior
+    tech_stack: list[str] = Field(default_factory=list)
+    languages: list[LanguageSkill] = Field(default_factory=list)
+    experience: list[ExperienceEntry] = Field(default_factory=list)
+    education: list[Education] = Field(default_factory=list)
+    summary: str | None = None
+    additional_info: str | None = Field(None, description="Будь-яка інша корисна інформація, що не лягає в структуру")
 
-    Returns:
-        Рядок із причиною відсіву, або None якщо вакансія проходить.
+class SearchPreferences(BaseModel):
+    """Чого хоче пошукач — заповнює руками (в резюме цього нема)."""
+    desired_roles: list[str]
+    min_salary: int | None = None
+    work_formats: list[WorkFormat] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    must_have: list[str] = Field(default_factory=list)      # обов'язкові умови
+    deal_breakers: list[str] = Field(default_factory=list)  # стоп-слова
+
+class Vacancy(BaseModel):
+    """Куди парсимо оголошення."""
+    company: str | None = None
+    role: str | None = None
+    seniority: str | None = None          # junior / middle / senior — якого рівня шукають
+    location: str | None = None
+    work_format: WorkFormat | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    tech_stack: list[str] = Field(default_factory=list)
+    languages: list[LanguageSkill] = Field(default_factory=list)
+    posting_language: str | None = Field(None, description="ISO 639-1 мови, якою НАПИСАНЕ оголошення (щоб відповісти тією ж), напр. 'uk', 'en'")
+    additional_info: str | None = Field(None, description="Усе, що не структурується в інші поля")
+    apply_url: str | None = None          # ключове для "рук" агента (URL вакансії на DOU)
+    source_url: str | None = None
+    raw_text: str = ""                     # оригінал; заповнюємо кодом, не LLM
+
+class MatchResult(BaseModel):
+    """Наскільки вакансія підходить пошукачу."""
+    score: int = Field(ge=0, le=100)
+    reasons: list[str] = Field(default_factory=list)
+
+class Attachment(BaseModel):
+    """Файл-вкладення до повідомлення (резюме, портфоліо тощо)."""
+    filename: str                                          # "resume.pdf"
+    path: str                                              # шлях до файлу на диску
+    mime_type: str = "application/octet-stream"             # "application/pdf"
+
+class IncomingMessage(BaseModel):
+    """Вхідний лист / повідомлення — типізована заміна dict."""
+    sender: str                                             # "recruiter@company.com"
+    subject: str = ""
+    body: str = ""
+    attachments: list[Attachment] = Field(default_factory=list)
+
+class EmailDraft(BaseModel):
+    """Чернетка листа — людина бачить її до відправки (approval gate, ч.2)."""
+    to: str = ""                          # заповнюємо кодом (apply_url), не покладаючись на LLM
+    subject: str = ""
+    body: str = ""
+    kind: str = "application"             # application | confirmation | counter_proposal
+
+class ConversationStage(str, Enum):
+    """Стадія листування з роботодавцем по одній вакансії."""
+    applied = "applied"            # відгук надіслано, чекаємо відповіді
+    negotiating = "negotiating"    # узгоджуємо час зустрічі
+    scheduled = "scheduled"        # час узгоджено, подію створено
+    rejected = "rejected"          # роботодавець відмовив
+
+class Conversation(BaseModel):
+    """Памʼять агента про діалог по ОДНІЙ вакансії.
+
+    Узгодження зустрічі — це НЕ один крок: агент пропонує час, роботодавець
+    відповідає, агент реагує. Щоб реагувати правильно (напр. зрозуміти голе
+    «так» як згоду на свій останній запропонований слот), треба памʼятати
+    стадію й останню пропозицію. Це той стан, який фреймворки (LangGraph/
+    LangChain) дають «з коробки» — а ми тримаємо його явно, простим обʼєктом.
     """
-    text = (v.raw_text or "").lower()
+    company: str                                   # привʼязка до вакансії (за назвою компанії)
+    stage: ConversationStage = ConversationStage.applied
+    last_proposed_slot: datetime | None = None     # останній час, що ЗАПРОПОНУВАВ агент
+    agreed_slot: datetime | None = None            # узгоджений час (коли stage=scheduled)
+    history: list[IncomingMessage] = Field(default_factory=list)  # уся переписка
 
-    # 1. Стоп-слова: явний сигнал «не моє» прямо в тексті оголошення.
-    for word in prefs.deal_breakers:
-        if word.lower() in text:
-            return f"deal-breaker: {word!r}"
+class ReplyAnalysis(BaseModel):
+    """Розбір вхідної відповіді роботодавця: до якої вакансії й що в ній."""
+    matched_company: str | None = None    # компанія/роль із листа — для матчингу до вакансії
+    is_rejection: bool = False            # це відмова?
+    # дозаповнення по вакансії (якщо роботодавець відповів на наші питання):
+    salary_min: int | None = None
+    salary_max: int | None = None
+    work_format: WorkFormat | None = None
+    location: str | None = None
+    # призначення зустрічі — сирий текст про час (точну дату парсимо в гілці співбесіди):
+    meeting_proposal: str | None = None
+    summary: str | None = None
 
-    # 2. Формат роботи: відсіваємо лише коли формат вакансії ВІДОМИЙ і не бажаний.
-    #    work_format часто None — тоді мовчимо, це вже питання до Task 8 (достатність).
-    if prefs.work_formats and v.work_format and v.work_format not in prefs.work_formats:
-        return f"формат {v.work_format.value} не серед бажаних"
+class SlotDecision(BaseModel):
+    """Рішення щодо запропонованого часу зустрічі."""
+    action: str                 # "accept" | "propose_alternative"
+    slot: datetime
 
-    # 3. Вилка нижче порогу: порівнюємо ТІЛЬКИ коли число справді відоме.
-    if prefs.min_salary and v.salary_max and v.salary_max < prefs.min_salary:
-        return f"вилка {v.salary_max} < мінімум {prefs.min_salary}"
+class InterviewProposal(BaseModel):
+    """Запропонований роботодавцем час співбесіди (розібраний у datetime).
 
-    # 4. Обов'язкові умови кандидата: якщо must-have взагалі не згадано в тексті —
-    #    відсіваємо дешево. Точне «чи справді підходить» — робота LLM, не цього коду.
-    for skill in prefs.must_have:
-        if skill.lower() not in text:
-            return f"немає обов'язкового: {skill!r}"
-
-    return None
-
-
-# ── Повнота даних (алгоритмічно, замість LLM-достатності) ─────────
-
-def missing_fields(v: Vacancy, prefs: SearchPreferences) -> list[str]:
-    """Які важливі для рішення поля у вакансії порожні — детерміновано, без LLM.
-
-    Після Task 6 дані вже структуровані в поля Vacancy, тож «чи є вилка/формат»
-    — це факт (поле is None), а не судження. Перевіряємо лише те, що цікавить
-    кандидата (prefs). Повертає короткі українські мітки — вони ж стануть
-    питаннями в листі роботодавцю (частина 2).
+    when=None, якщо в листі немає КОНКРЕТНОГО часу (напр. голе «так, підходить»):
+    тоді час береться з памʼяті розмови (Conversation.last_proposed_slot), а не
+    вигадується.
     """
-    gaps: list[str] = []
-    if prefs.min_salary and not (v.salary_min or v.salary_max):
-        gaps.append("зарплатна вилка")
-    if prefs.work_formats and v.work_format is None:
-        gaps.append("формат роботи")
-    if prefs.locations and not v.location:
-        gaps.append("локація")
-    if not v.tech_stack:
-        gaps.append("стек технологій")
-    return gaps
-
-
-def has_enough_info(v: Vacancy, prefs: SearchPreferences, max_gap: int = 2) -> bool:
-    """Чи брати вакансію в шортліст на матчинг.
-
-    Не жорсткі ворота: вакансію з невеликим gap (≤ max_gap незаповнених полів)
-    усе одно беремо — бракуючі деталі потім спитаємо в листі. Відсіюємо лише
-    зовсім «порожні» оголошення, де оцінювати просто нема чого.
-    """
-    return len(missing_fields(v, prefs)) <= max_gap
-
-
-# ── Памʼять розмови: який час зараз обговорюється ──────────────────
-
-def resolve_meeting_time(
-    proposal_when: datetime | None,
-    conv: Conversation,
-) -> datetime | None:
-    """Який час обговорюється — З УРАХУВАННЯМ ПАМʼЯТІ розмови, без LLM.
-
-    Узгодження — не один крок, тому без стану голе «так» втрачає контекст:
-    - LLM витяг конкретний час із листа → беремо його;
-    - часу в листі нема (напр. «так, підходить»), але ми вже щось пропонували
-      й досі узгоджуємо → це згода на НАШ останній запропонований слот;
-    - інакше невідомо (None) — агент перепитає.
-    """
-    if proposal_when is not None:
-        return proposal_when
-    if conv.stage == ConversationStage.negotiating and conv.last_proposed_slot is not None:
-        return conv.last_proposed_slot
-    return None
-
-
-# ── Обробка вхідної відповіді (матчинг + дозаповнення) — без LLM ───
-
-def match_reply_to_vacancy(
-    company_hint: str | None,
-    vacancies: list[Vacancy],
-) -> Vacancy | None:
-    """Знаходить вакансію, до якої стосується відповідь, за згадкою компанії.
-
-    Детермінований матчинг: LLM лише витяг назву компанії з листа (analyze_reply),
-    а зіставлення з нашим шортлистом — звичайне порівняння рядків.
-    """
-    if not company_hint:
-        return None
-    hint = company_hint.lower()
-    for v in vacancies:
-        company = (v.company or "").lower()
-        if company and (company in hint or hint in company):
-            return v
-    return None
-
-
-def apply_reply_updates(v: Vacancy, analysis: ReplyAnalysis) -> None:
-    """Дозаповнює ПОРОЖНІ поля вакансії досланими даними (наявні не чіпаємо).
-
-    Мутує v на місці. Після цього missing_fields(v) поверне менший gap.
-
-    ЧОМУ МУТАЦІЯ, А НЕ КОПІЯ: для навчального проєкту — простіше. У продакшені
-    краще іммутабельний підхід: v = v.model_copy(update={"salary_min": ...}),
-    щоб зберігати трасованість (хто і коли змінив поле). Мутація на місці
-    простіша, але ускладнює дебаг: значення salary_min «з'явилось із нізвідки».
-    """
-    v.salary_min = v.salary_min or analysis.salary_min
-    v.salary_max = v.salary_max or analysis.salary_max
-    v.work_format = v.work_format or analysis.work_format
-    v.location = v.location or analysis.location
-
-
-# ── Планування слота зустрічі — без LLM ───────────────────────────
-
-def resolve_slot(proposed: datetime, cal: CalendarProvider) -> SlotDecision:
-    """Рішення щодо запропонованого часу — ДЕТЕРМІНОВАНО, без LLM.
-
-    Розбір дати з листа — робота LLM (Task 16); а «вільно/зайнято/найближчий
-    слот» — чиста логіка календаря. Повертаємо рішення як дані (SlotDecision),
-    а не діємо одразу — щоб далі вмонтувати approval gate.
-    """
-    # LLM інколи повертає datetime із tzinfo (offset-aware), а LocalCalendar
-    # працює в naive локальному часі — прибираємо tz, щоб порівняння не падало.
-    if proposed.tzinfo is not None:
-        proposed = proposed.replace(tzinfo=None)
-    if cal.is_available(proposed):
-        return SlotDecision(action="accept", slot=proposed)
-    return SlotDecision(action="propose_alternative", slot=cal.next_free_slot(proposed))
+    when: datetime | None = None   # не називаємо поле 'datetime' — не затіняємо тип
+    note: str | None = None

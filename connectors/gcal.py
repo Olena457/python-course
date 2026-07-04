@@ -1,153 +1,127 @@
 """
-Email-конектори для частини 2.
+GoogleCalendar — реальний адаптер CalendarProvider через Google Calendar API.
 
-ImapReceiver реалізує порт MessageReceiver: дістає непрочитані листи зі скриньки
-агента через IMAP і повертає типізовані IncomingMessage. Друга «рука» агента —
-теж німий I/O: лише читає, нічого не вирішує.
+Камео (Task 17): та сама логіка, що в LocalCalendar (вільно/зайнято/найближчий
+слот/створити подію), але на РЕАЛЬНОМУ календарі. Доводить тезу ports & adapters:
+`resolve_slot` і цикл агента не змінюються — змінюється лише адаптер.
 
-Демо-стійкість: MockReceiver (теж MessageReceiver) повертає заготовлену відповідь
-«роботодавця» — фолбек, якщо IMAP недоступний або скринька порожня. Перемикання
-адаптера = один рядок; ядро й цикл агента не змінюються (ports & adapters).
-
-Реальний шлях демонстрації: надіслати листа з будь-якої пошти на AGENT_EMAIL —
-ImapReceiver його прочитає (лист має бути непрочитаним, IMAP увімкнено в Gmail).
+─────────────────────────────────────────────────────────────────────────────
+SETUP (один раз, робить користувач):
+1. Google Cloud Console → новий проект → увімкнути «Google Calendar API».
+2. APIs & Services → OAuth consent screen → External → додати себе в Test users.
+3. Credentials → Create credentials → OAuth client ID → тип «Desktop app» →
+   завантажити JSON як `credentials.json` у корінь проєкту.
+4. Перший запуск GoogleCalendar() відкриє браузер для згоди — після неї
+   збережеться `token.json` (наступні запуски — без браузера).
+Обидва файли вже в .gitignore.
+─────────────────────────────────────────────────────────────────────────────
 """
 
-import email as emaillib
-import imaplib
-import os
-import smtplib
-from email.header import decode_header, make_header
-from email.message import Message
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.utils import parseaddr
+import os.path
+import pathlib
+from datetime import datetime, timedelta
 
-from core.models import Attachment, IncomingMessage
-from core.ports import MessageReceiver, MessageSender
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 
+from core.ports import CalendarProvider
 
-def _decode_header(value: str) -> str:
-    """MIME encoded-word заголовок (=?UTF-8?B?...?=) → звичайний рядок.
+_SCOPES = ["https://www.googleapis.com/auth/calendar"]
+# ЧОМУ абсолютні шляхи: ноутбук працює з cwd=notebooks/, а файли — у корені проєкту.
+# Відносні "credentials.json"/"token.json" → FileNotFoundError → тихий фолбек на
+# LocalCalendar. Прив'язуємо до кореня через __file__ (як _CACHE у vacancy_source.py).
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_CREDENTIALS = str(_ROOT / "credentials.json")
+_TOKEN = str(_ROOT / "token.json")
+def _rfc3339(dt: datetime) -> str:
+    """naive datetime → RFC3339 з offset (Google API вимагає tz-aware).
 
-    Gmail кодує не-ASCII теми й імена за RFC 2047 (=?UTF-8?B?...?=). Без
-    декодування у subject/sender лізе сирий «=?UTF-8?B?...?=» — псує і вигляд,
-    і вхід для LLM. make_header(decode_header()) збирає з частин читабельний текст.
+    Naive-час трактуємо в ЛОКАЛЬНОМУ поясі системи (.astimezone()), а НЕ в
+    захардкодженому. Інакше час зсувається: машина в GMT+2, а хардкод
+    Europe/Kyiv (GMT+3) → і подія, і перевірка зайнятості на годину раніше.
     """
-    if not value:
-        return ""
-    return str(make_header(decode_header(value)))
+    if dt.tzinfo is None:
+        dt = dt.astimezone()   # naive → aware у локальному поясі системи
+    return dt.isoformat()
 
 
-def _extract_plain_text(msg: Message) -> str:
-    """Дістає text/plain з листа (multipart або простого)."""
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True) or b""
-                return payload.decode(part.get_content_charset() or "utf-8", "replace")
-        return ""
-    payload = msg.get_payload(decode=True) or b""
-    return payload.decode(msg.get_content_charset() or "utf-8", "replace")
+def _load_service():
+    """OAuth: token.json → (refresh) → інакше браузер-згода через credentials.json."""
+    creds = None
+    if os.path.exists(_TOKEN):
+        creds = Credentials.from_authorized_user_file(_TOKEN, _SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(_CREDENTIALS, _SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(_TOKEN, "w") as f:
+            f.write(creds.to_json())
+    return build("calendar", "v3", credentials=creds)
 
 
-class ImapReceiver:
-    """MessageReceiver через Gmail IMAP."""
+class GoogleCalendar:
+    """CalendarProvider на реальному Google Calendar (той самий контракт, що LocalCalendar)."""
 
-    HOST = "imap.gmail.com"
-
-    def fetch_unread(self, limit: int = 5) -> list[IncomingMessage]:
-        out: list[IncomingMessage] = []
-        # App Password у .env інколи з пробілами (формат 'xxxx xxxx xxxx xxxx') — прибираємо.
-        pwd = os.environ["GMAIL_APP_PASSWORD"].replace(" ", "")
-        with imaplib.IMAP4_SSL(self.HOST) as m:
-            m.login(os.environ["AGENT_EMAIL"], pwd)
-            m.select("INBOX")
-            _, ids = m.search(None, "UNSEEN")
-            for num in ids[0].split()[:limit]:
-                _, data = m.fetch(num, "(RFC822)")
-                msg = emaillib.message_from_bytes(data[0][1])
-                out.append(
-                    IncomingMessage(
-                        sender=_decode_header(msg["From"] or ""),
-                        subject=_decode_header(msg["Subject"] or ""),
-                        body=_extract_plain_text(msg),
-                    )
-                )
-        return out
-
-
-# Заготовлена відповідь «роботодавця» для демо-фолбеку: одразу містить і вилку
-# (закриває gap), і пропозицію часу — це знадобиться для гілки «співбесіда» (Task 16).
-_DEFAULT_REPLY = IncomingMessage(
-    sender="HR Techery <hr@techery.example>",
-    subject="Re: відгук на Senior Python Engineer",
-    body=(
-        "Доброго дня! Дякуємо за відгук — профіль цікавий, і ваш AI-агент вразив. "
-        "Зарплатна вилка для позиції — $5000–7000. "
-        "Чи зручно вам онлайн-співбесіда у четвер о 15:00?"
-    ),
-)
-
-
-class MockReceiver:
-    """Фолбек-MessageReceiver: повертає заготовлену відповідь без мережі."""
-
-    def __init__(self, messages: list[IncomingMessage] | None = None) -> None:
-        self._messages = messages if messages is not None else [_DEFAULT_REPLY]
-
-    def fetch_unread(self, limit: int = 5) -> list[IncomingMessage]:
-        return self._messages[:limit]
-
-
-class GmailSender:
-    """MessageSender через Gmail SMTP — для листування (відповіді роботодавцю).
-
-    dry_run=True за замовчуванням (МОК): нічого не шле, лише друкує лист.
-    Реальна відправка — dry_run=False (SMTP на AGENT_EMAIL з App Password).
-    """
-
-    HOST = "smtp.gmail.com"
-    PORT = 587
-
-    def __init__(self, dry_run: bool = True) -> None:
-        self.dry_run = dry_run
-
-    def send(
+    def __init__(
         self,
-        to: str,
-        subject: str,
-        body: str,
-        attachments: list[Attachment] | None = None,
+        calendar_id: str = "primary",
+        work_start: int = 10,
+        work_end: int = 19,
+        slot: timedelta = timedelta(hours=1),
     ) -> None:
-        sender = os.environ["AGENT_EMAIL"]
-        to_addr = parseaddr(to)[1] or to  # 'HR <hr@x>' -> 'hr@x'
+        self._svc = _load_service()
+        self.calendar_id = calendar_id
+        self.work_start = work_start
+        self.work_end = work_end
+        self.slot = slot
 
-        if self.dry_run:
-            print("🧪 [DRY-RUN] лист НЕ надіслано (мок). Реально пішло б:")
-            print(f"   From: {sender}  →  To: {to_addr}")
-            print(f"   Subject: {subject}")
-            print(f"   {body[:160]}{'…' if len(body) > 160 else ''}")
-            return
+    # ⚠️ ДУБЛЮВАННЯ: _within_hours і next_free_slot ідентичні з LocalCalendar (core/calendar.py).
+    # Це свідомий компроміс для навчального проєкту. Варіанти усунення:
+    #   1. Mixin-клас (CalendarMixin) з робочими годинами і пошуком слотів — обидва
+    #      календарі наслідують його, додаючи лише свою реалізацію is_available.
+    #   2. Базовий абстрактний клас (ABC) замість Protocol — із default-реалізацією
+    #      _within_hours і next_free_slot, але тоді втрачаємо duck typing.
+    #   3. Утілітна функція within_hours(dt, start, end) у core/ — обидва імпортують.
+    # Для навчального проєкту дублювання прийнятне, бо кожен адаптер лишається
+    # самодостатнім і зрозумілим окремо (один файл — одна реалізація).
 
-        msg = MIMEMultipart()
-        msg["From"], msg["To"], msg["Subject"] = sender, to_addr, subject
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        for att in attachments or []:
-            with open(att.path, "rb") as f:
-                part = MIMEApplication(f.read())
-            part.add_header("Content-Disposition", "attachment", filename=att.filename)
-            msg.attach(part)
+    def _within_hours(self, dt: datetime) -> bool:
+        return self.work_start <= dt.hour < self.work_end
 
-        pwd = os.environ["GMAIL_APP_PASSWORD"].replace(" ", "")
-        with smtplib.SMTP(self.HOST, self.PORT) as s:
-            s.starttls()
-            s.login(sender, pwd)
-            s.send_message(msg)
-        print(f"✅ лист надіслано на {to_addr}")
+    def is_available(self, dt: datetime) -> bool:
+        if not self._within_hours(dt):
+            return False
+        # freebusy: чи зайнятий інтервал [dt, dt+slot] у реальному календарі
+        result = self._svc.freebusy().query(body={
+            "timeMin": _rfc3339(dt),
+            "timeMax": _rfc3339(dt + self.slot),
+            "items": [{"id": self.calendar_id}],
+        }).execute()
+        busy = result["calendars"][self.calendar_id]["busy"]
+        return len(busy) == 0
+
+    def next_free_slot(self, after: datetime) -> datetime:
+        dt = after
+        for _ in range(7 * 24):  # тиждень уперед максимум
+            dt += self.slot
+            if self.is_available(dt):
+                return dt
+        raise RuntimeError("немає вільних слотів на тиждень уперед")
+
+    def create_event(self, title: str, start: datetime, end: datetime) -> str:
+        """Створює РЕАЛЬНУ подію в календарі; повертає посилання на неї."""
+        event = self._svc.events().insert(calendarId=self.calendar_id, body={
+            "summary": title,
+            "start": {"dateTime": _rfc3339(start)},
+            "end": {"dateTime": _rfc3339(end)},
+        }).execute()
+        return event.get("htmlLink", event["id"])
 
 
-_check_imap: MessageReceiver = ImapReceiver()  # статична перевірка контракту
-_check_mock: MessageReceiver = MockReceiver()
-_check_gmail: MessageSender = GmailSender()
+# Статична перевірка контракту виконується ліниво (потребує OAuth), тож тут
+# лишаємо лише анотацію наміру — реальний _check робиться при інстанціюванні.
+_: type[CalendarProvider] = GoogleCalendar
