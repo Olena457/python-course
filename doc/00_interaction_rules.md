@@ -1,8 +1,11 @@
-# Правила нашої взаємодії при підготовці та проведенні вебінару
 
-1. **Покрокова робота:** Ми працюємо ітеративно, крок за кроком, ніби безпосередньо проводимо вебінар.
-2. **Дрібні кроки:** Кожен крок має бути невеликим і легко засвоюваним.
-3. **Жива дискусія:** Перед кожним кроком ми обговорюємо: що саме робимо і для чого. Досягаємо спільного розуміння.
-4. **MD-вставка для студентів:** Коли є згода щодо кроку, генерується markdown-текст (опис для студентів). У ньому коротко описується принцип роботи, що саме ми робимо і як цим користуватися.
-5. **Код з "ЧОМУ":** Після опису пишеться сам код. У коментарях до коду обов'язково пояснюється **ЧОМУ САМЕ ТАК** зроблено (особливо там, де є архітектурні чи логічні нюанси).
-6. **Гнучкість документації:** За потреби ми коригуємо наші супровідні документи (`@doc`) у процесі роботи.
+
+# Rules of Our Interaction in Preparing and Conducting the Webinar
+
+1. **Step-by-Step Work:** We proceed iteratively, one step at a time, as if we are directly conducting the webinar.  
+2. **Small Steps:** Each step should be simple and easy to absorb.  
+3. **Live Discussion:** Before each step, we discuss what exactly we are doing and why. We aim for shared understanding.  
+4. **Markdown Insert for Students:** Once we agree on a step, we generate a markdown text (a description for students). It briefly explains the principle, what we are doing, and how to use it.  
+5. **Code with “WHY”:** After the description, we write the code itself. In the comments, we must explain **WHY it is done this way** (especially where architectural or logical nuances exist).  
+6. **Flexible Documentation:** If needed, we adjust our supporting documents (`@doc`) during the process.  
+

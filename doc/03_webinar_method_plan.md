@@ -1,72 +1,80 @@
-# Вебінар: ідея та тема
 
-## 1. Концепція
 
-**Що буде зроблено:** у Jupyter, наживо, крок за кроком пишемо AI-агента, який шукає роботу за свого "поручителя":
+---
 
-1. **Стартуємо з резюме** — беремо резюме поручителя (PDF) і просимо LLM структурувати його у Pydantic-модель `CandidateProfile` — перша демонстрація "Парсинг 2.0" на маленькому особистому документі
-2. **Побажання пошукача** — те, чого нема в резюме (вилка, формат, стоп-умови), людина задає руками як `SearchPreferences`
-3. **Парсить вакансії** — забирає оголошення з jobs.dou.ua, де описи — це HTML-текст.
-4. **Структурує** — та сама техніка: оголошення → модель `Vacancy` (з `apply_url`)
-5. **Відсіює і оцінює** — алгоритмічний фільтр без LLM → повнота даних (алгоритмічно) → матчинг (LLM); на виході — впорядкований шортліст з причинами та `gap` (чого бракує)
-6. **Пише лист** — від імені **AI-агента кандидата** (це сама по собі фішка для роботодавця), мовою оголошення, на основі `CandidateProfile` × `Vacancy`; якщо є `gap` — додає в кінець ввічливі питання по відсутніх деталях
-7. **Відгукується та листується** — агент відгукується на вакансію через форму DOU (підставляючи sessionid), а далі читає відповідь роботодавця на пошті, пропонує наступний крок (зустріч) і відповідає через звичайний email.
+# Webinar: Idea and Theme
 
-**Чому це працює:**
-- Аудиторія вебінару = люди, що вчаться програмуванню = люди, що шукають/шукатимуть роботу. Агент шукає роботу *за них* — тема особиста, не абстрактна.
-- **Лист пише сам агент — і це видно.** Для роботодавця такий лист — сигнал технічної кмітливості кандидата, а не черговий шаблон. Це перетворює «автоматизацію відгуків» з ризику (спам) на перевагу.
-- Органічний гібрид запиту замовника ("Парсинг 2.0") і агентної теми: парсинг = конектор "світ → LLM", email = конектор "LLM → світ" (MCP/tool use).
-- Демонструє повний агентний патерн **parse → reason → act** — evergreen-контент для YouTube.
-- Jupyter задає правильний наратив: клітинка → результат → наступний крок; без стіни коду.
+## 1. Concept
 
-## 2. Технічне ядро (що вивчить аудиторія)
+**What will be done:** In Jupyter, live, step by step, we build an AI agent that searches for a job on behalf of its “sponsor”:
 
-| Блок | Зміст |
+1. **Start with the resume** — take the sponsor’s resume (PDF) and ask the LLM to structure it into a Pydantic model `CandidateProfile`. First demo of “Parsing 2.0” on a small personal document.  
+2. **Job seeker’s preferences** — things missing from the resume (salary range, format, stop conditions), entered manually as `SearchPreferences`.  
+3. **Parse vacancies** — collect job postings from jobs.dou.ua, where descriptions are HTML text.  
+4. **Structure them** — same technique: posting → `Vacancy` model (with `apply_url`).  
+5. **Filter and evaluate** — algorithmic filter without LLM → data completeness check → matching via LLM. Output: ordered shortlist with reasons and `gap` (missing details).  
+6. **Write a letter** — from the **AI agent candidate** (a unique hook for employers), in the language of the posting, based on `CandidateProfile × Vacancy`. If there’s a `gap`, add polite questions at the end.  
+7. **Apply and correspond** — agent applies via DOU form (using sessionid), then reads employer’s reply from email, proposes next step (interview), and responds via regular email.  
+
+**Why this works:**
+- Webinar audience = people learning programming = people looking for jobs. The agent searches *for them* — personal, not abstract.  
+- **The letter is written by the agent — visibly.** For employers, such a letter signals technical ingenuity, not just another template. This turns “automated applications” from a spam risk into an advantage.  
+- Natural hybrid of organizer’s request (“Parsing 2.0”) and agent theme: parsing = connector “world → LLM”, email = connector “LLM → world” (MCP/tool use).  
+- Demonstrates full agent pattern **parse → reason → act** — evergreen YouTube content.  
+- Jupyter provides the right narrative: cell → result → next step; no code wall.  
+
+## 2. Technical Core (What the Audience Learns)
+
+| Block | Content |
 |---|---|
-| Конектор входу | резюме (PDF→текст) і вакансії (DOU, httpx + bs4) → LLM-екстракція у Pydantic-моделі (structured output через instructor) |
-| Ручний ввід | `SearchPreferences` — побажання пошукача, яких нема в резюме |
-| Reasoning | алгоритмічний фільтр (без LLM) → повнота даних (без LLM, перевірка полів) → матчинг (LLM, judge-модель); далі один лист від AI-агента + питання по `gap`, якщо чогось бракує |
-| Конектор дії | tool use: відгук через форму DOU (POST через helper), читання відповідей з Gmail (IMAP), узгодження зустрічі через календар |
-| Архітектура | `core/` (моделі + чиста логіка, без I/O) ↔ `connectors/` (PDF, HTTP, LLM); ноутбук — диригент. Human-in-the-loop: агент пропонує — людина підтверджує (approval gate) |
+| Input connector | Resume (PDF→text) and vacancies (DOU, httpx + bs4) → LLM extraction into Pydantic models (structured output via instructor) |
+| Manual input | `SearchPreferences` — job seeker’s wishes not in the resume |
+| Reasoning | Algorithmic filter (no LLM) → data completeness check → matching (LLM, judge model); then one agent-written letter + questions for `gap` |
+| Action connector | Tool use: apply via DOU form (POST via helper), read replies from Gmail (IMAP), schedule interview via calendar |
+| Architecture | `core/` (models + pure logic, no I/O) ↔ `connectors/` (PDF, HTTP, LLM); notebook = conductor. Human-in-the-loop: agent proposes → human approves (approval gate) |
 
-Повний агентний патерн вебінару: **parse → reason → act**. Стан живе в пам'яті ноутбука (список об'єктів) — БД не потрібна.
+Full agent pattern: **parse → reason → act**. State lives in notebook memory (list of objects) — no DB needed.  
 
-## 3. Розбивка на дві зустрічі (по ≤1,5 год)
+## 3. Breakdown into Two Sessions (≤1.5h each)
 
-### Зустріч 1 — «Агент бачить світ»
-- Постановка задачі та демо фінального результату (тизер)
-- Резюме → LLM-екстракція → `CandidateProfile` (перший "Парсинг 2.0" на особистому документі)
-- `SearchPreferences` — побажання пошукача руками
-- Вакансії з DOU: парсинг списку → модель `Vacancy` з `apply_url`
-- Відбір: алгоритмічний фільтр (без LLM) → достатність даних → матчинг (LLM)
-- **Кліфхенгер:** є шортліст і список «чого бракує», але агент ще не вміє нічого з цим зробити — "а що далі?"
+### Session 1 — “Agent Sees the World”
+- Problem statement + teaser demo of final result  
+- Resume → LLM extraction → `CandidateProfile` (first “Parsing 2.0” on personal doc)  
+- `SearchPreferences` — manual input by seeker  
+- Vacancies from DOU: parse list → `Vacancy` model with `apply_url`  
+- Selection: algorithmic filter → data sufficiency → matching (LLM)  
+- **Cliffhanger:** shortlist + “missing details” list, but agent can’t act yet — “what’s next?”  
 
-### Зустріч 2 — «Агент діє»
-- Короткий recap частини 1 (+ посилання на запис)
-- Анатомія агента: цикл стан → рішення → інструмент
-- Reasoning-розвилка: бракує даних → уточнюючий лист; усе збігається → мотиваційний лист + резюме
-- MCP/tool use: відправка листа, читання відповіді
-- Approval gate: чому агент не діє без підтвердження людини
-- Фінал: повний прохід пайплайна end-to-end; CTA на курси ITVDN/CBS
+### Session 2 — “Agent Acts”
+- Short recap of Part 1 (+ link to recording)  
+- Agent anatomy: state → decision → tool  
+- Reasoning fork: missing data → clarifying letter; all matches → motivational letter + resume  
+- MCP/tool use: send letter, read reply  
+- Approval gate: why agent doesn’t act without human confirmation  
+- Finale: full end-to-end pipeline run; CTA to ITVDN/CBS courses  
 
-## 4. Прийняті рішення щодо ризиків
+## 4. Risk Decisions
 
-1. **Джерело вакансій:** jobs.dou.ua. Парсинг лінків і текстів вакансій. Замість email роботодавця ми зберігаємо URL форми відгуку. Кешований знімок відповіді зберігається як фолбек.
-2. **Відгук:** Для відправки відгуку на DOU користувач руками дістає `sessionid` та `csrftoken` зі свого браузера. Щоб не перевантажувати вебінар низькорівневим кодом POST-запитів, логіка сабміту форми винесена у допоміжний `dou_helper.py`. Відповіді від роботодавців читаємо з Gmail (куди DOU надсилає сповіщення).
-3. **Human-in-the-loop:** агент не відправляє форми автономно; обов'язковий approval gate. Подаємо це не як обмеження демо, а як принцип проєктування агентів.
+1. **Vacancy source:** jobs.dou.ua. Parse links and vacancy texts. Instead of employer email, store application form URL. Cached snapshot of response as fallback.  
+2. **Application:** To apply on DOU, user manually retrieves `sessionid` and `csrftoken` from browser. To avoid low-level POST code overload, form submission logic is in helper `dou_helper.py`. Employer replies read from Gmail (where DOU sends notifications).  
+3. **Human-in-the-loop:** Agent never submits autonomously; approval gate required. Presented not as demo limitation but as agent design principle.  
 
-## 5. Назва — кандидати
+## 5. Title Candidates
 
-Робоча зв'язка: особиста вигода + Python + AI/агент.
+Working link: personal benefit + Python + AI/agent.
 
-1. **«Агент, який шукає роботу за тебе: пишемо AI-агента на Python»** — основний кандидат
-2. «Парсинг 2.0 → Агент 1.0: від збору даних до AI, що діє за тебе»  — місток від початкової теми замовника
-3. «Python + AI: агент, що сам знаходить вакансії та листується з роботодавцями»
+1. **“An Agent That Finds a Job for You: Building an AI Agent in Python”** — main candidate  
+2. “Parsing 2.0 → Agent 1.0: From Data Collection to AI Acting for You” — bridge from organizer’s initial theme  
+3. “Python + AI: An Agent That Finds Vacancies and Corresponds with Employers”  
 
-Підзаголовки частин:
-- Частина 1: «Агент бачить світ: парсинг і розуміння даних через LLM»
-- Частина 2: «Агент діє: reasoning, MCP та листування від твого імені»
+Subtitles for sessions:
+- Part 1: “Agent Sees the World: Parsing and Understanding Data via LLM”  
+- Part 2: “Agent Acts: Reasoning, MCP, and Correspondence on Your Behalf”  
 
-## 6. Гачок для промо (shorts, ≤1 хв)
+## 6. Promo Hook (shorts, ≤1 min)
 
-«Я написав агента на Python, який сам знаходить вакансії, ставить роботодавцям питання і домовляється про співбесіду. За дві зустрічі покажу, як написати такого — з нуля, в Jupyter. Приходь.»
+“I built an agent in Python that finds vacancies, asks employers questions, and arranges interviews. In two sessions, I’ll show how to build one — from scratch, in Jupyter. Join us.”  
+
+---
+
+Would you like me to polish the **titles and promo hook** into more marketing-style phrasing (catchier headlines, stronger call-to-action), or keep them in this practical, explanatory tone?
